@@ -1,0 +1,46 @@
+name: Build Executables
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build .exe
+        run: pyinstaller --noconfirm --onedir --windowed --name "MakerWorldTranslator" main.py
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MakerWorldTranslator-Windows
+          path: dist/MakerWorldTranslator/**
+
+  build-macos-arm64:
+    runs-on: macos-14  # Apple Silicon (M1/M2/M3) runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build .app
+        run: pyinstaller --noconfirm --onedir --windowed --name "MakerWorldTranslator" main.py
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MakerWorldTranslator-macOS-AppleSilicon
+          path: dist/MakerWorldTranslator.app
