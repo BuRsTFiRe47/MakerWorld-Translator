@@ -2,13 +2,13 @@
 MakerWorld File Translator
 ---------------------------
 TR: MakerWorld gibi kaynaklardan indirilen dosya/klasörlerdeki Çince
-    isimleri toplu halde İngilizce veya Türkçe'ye çevirir. Koyu/açık
-    temalı arayüz, opsiyonel alt klasör taraması, opsiyonel klasör ismi
-    çevirisi ve dry-run (simülasyon) modu içerir.
+    isimleri toplu halde İngilizce, Türkçe, Almanca veya İspanyolca'ya
+    çevirir. Koyu/açık temalı arayüz, opsiyonel alt klasör taraması,
+    opsiyonel klasör ismi çevirisi ve dry-run (simülasyon) modu içerir.
 EN: Bulk-renames Chinese file/folder names (e.g. from MakerWorld
-    downloads) into English or Turkish, with a dark/light GUI, optional
-    recursive subfolder scan, optional folder-name translation, and a
-    dry-run mode.
+    downloads) into English, Turkish, German, or Spanish, with a
+    dark/light GUI, optional recursive subfolder scan, optional
+    folder-name translation, and a dry-run mode.
 
 TR: Çapraz platform: Windows ve macOS (Apple Silicon için PyInstaller
     ile native derleme).
@@ -24,9 +24,34 @@ import customtkinter as ctk
 from tkinter import filedialog
 from deep_translator import GoogleTranslator
 
+__version__ = "1.5.0"
+
 # ---------------------------------------------------------------------
-# TR: Arayüz metin tabloları (program dili: Türkçe / İngilizce)
-# EN: UI text tables (program language: Turkish / English)
+# TR: Desteklenen diller — hem arayüz dili hem de çeviri hedef dili için
+#     kullanılır. Etiketler bayrak + iki harfli kod içerir: bir dil
+#     bilmeyen kişi bile bayraktan (veya en kötü ihtimalle koddan)
+#     kendi dilini bulabilir. NOT: Windows'ta bazı yazı tipleri bayrak
+#     emojisini harf çifti olarak gösterebilir — bu yüzden kod da yanına
+#     eklendi, tek başına bayrağa güvenilmiyor.
+# EN: Supported languages — used for both the UI language and the file
+#     translation target language. Labels combine a flag + two-letter
+#     code: even someone who can't read the language can find their own
+#     by the flag (or, worst case, the code). NOTE: On Windows some
+#     fonts render flag emoji as plain letter pairs — pairing the code
+#     alongside it avoids relying on the flag alone.
+# ---------------------------------------------------------------------
+LANG_OPTIONS = [
+    ("tr", "🇹🇷 TR"),
+    ("en", "🇬🇧 EN"),
+    ("de", "🇩🇪 DE"),
+    ("es", "🇪🇸 ES"),
+]
+LABEL_TO_CODE = {label: code for code, label in LANG_OPTIONS}
+CODE_TO_LABEL = {code: label for code, label in LANG_OPTIONS}
+
+# ---------------------------------------------------------------------
+# TR: Arayüz metin tabloları (program dili: TR / EN / DE / ES)
+# EN: UI text tables (program language: TR / EN / DE / ES)
 # ---------------------------------------------------------------------
 TEXTS = {
     "tr": {
@@ -36,9 +61,7 @@ TEXTS = {
         "subfolder_check": "Alt Klasörleri Tara",
         "folder_name_check": "Klasör İsimlerini de Çevir",
         "dryrun_check": "Dry Run (Sadece Simülasyon)",
-        "translation_direction": "Çeviri Yönü:",
-        "dir_en": "Çince → İngilizce",
-        "dir_tr": "Çince → Türkçe",
+        "translation_direction": "Çeviri Yönü (Çince →):",
         "ui_lang": "Program Dili:",
         "theme_switch_dark": "Koyu Mod",
         "theme_switch_light": "Açık Mod",
@@ -53,8 +76,7 @@ TEXTS = {
         "error": "[HATA]",
         "dry_found": "[DRY RUN] Bulundu",
         "dry_translated": "[DRY RUN] Çevrildi",
-        "lang_target_en": "İngilizce",
-        "lang_target_tr": "Türkçe",
+        "lang_names": {"tr": "Türkçe", "en": "İngilizce", "de": "Almanca", "es": "İspanyolca"},
     },
     "en": {
         "title": "MakerWorld File Translator",
@@ -63,9 +85,7 @@ TEXTS = {
         "subfolder_check": "Scan Subfolders",
         "folder_name_check": "Also Translate Folder Names",
         "dryrun_check": "Dry Run (Simulation Only)",
-        "translation_direction": "Translation Direction:",
-        "dir_en": "Chinese → English",
-        "dir_tr": "Chinese → Turkish",
+        "translation_direction": "Translation Direction (Chinese →):",
         "ui_lang": "Program Language:",
         "theme_switch_dark": "Dark Mode",
         "theme_switch_light": "Light Mode",
@@ -80,8 +100,55 @@ TEXTS = {
         "error": "[ERROR]",
         "dry_found": "[DRY RUN] Found",
         "dry_translated": "[DRY RUN] Translated",
-        "lang_target_en": "English",
-        "lang_target_tr": "Turkish",
+        "lang_names": {"tr": "Turkish", "en": "English", "de": "German", "es": "Spanish"},
+    },
+    "de": {
+        "title": "MakerWorld Datei-Übersetzer",
+        "select_folder": "Ordner Auswählen",
+        "folder_placeholder": "Wählen Sie einen Ordner...",
+        "subfolder_check": "Unterordner Durchsuchen",
+        "folder_name_check": "Auch Ordnernamen Übersetzen",
+        "dryrun_check": "Testlauf (Nur Simulation)",
+        "translation_direction": "Übersetzungsrichtung (Chinesisch →):",
+        "ui_lang": "Programmsprache:",
+        "theme_switch_dark": "Dunkler Modus",
+        "theme_switch_light": "Heller Modus",
+        "start_btn": "Starten",
+        "start_btn_busy": "Wird verarbeitet...",
+        "log_header": "--- GESTARTET --- (Zielsprache: {lang})",
+        "dryrun_warning": "WARNUNG: Testlauf ist aktiv. Namen werden nicht tatsächlich geändert.\n",
+        "no_folder": "Bitte wählen Sie zuerst einen Ordner aus!",
+        "no_chinese": "Keine Datei/kein Ordner mit chinesischen Zeichen gefunden.",
+        "done": "--- FERTIG ---",
+        "success": "[ERFOLG]",
+        "error": "[FEHLER]",
+        "dry_found": "[TESTLAUF] Gefunden",
+        "dry_translated": "[TESTLAUF] Übersetzt",
+        "lang_names": {"tr": "Türkisch", "en": "Englisch", "de": "Deutsch", "es": "Spanisch"},
+    },
+    "es": {
+        "title": "Traductor de Archivos MakerWorld",
+        "select_folder": "Seleccionar Carpeta",
+        "folder_placeholder": "Selecciona una carpeta...",
+        "subfolder_check": "Escanear Subcarpetas",
+        "folder_name_check": "Traducir También los Nombres de Carpetas",
+        "dryrun_check": "Simulación (Solo Prueba)",
+        "translation_direction": "Dirección de Traducción (Chino →):",
+        "ui_lang": "Idioma del Programa:",
+        "theme_switch_dark": "Modo Oscuro",
+        "theme_switch_light": "Modo Claro",
+        "start_btn": "Iniciar",
+        "start_btn_busy": "Procesando...",
+        "log_header": "--- INICIADO --- (Idioma de destino: {lang})",
+        "dryrun_warning": "AVISO: La simulación está activa. Los nombres no cambiarán realmente.\n",
+        "no_folder": "¡Por favor selecciona una carpeta primero!",
+        "no_chinese": "No se encontró ningún archivo/carpeta con caracteres chinos.",
+        "done": "--- COMPLETADO ---",
+        "success": "[ÉXITO]",
+        "error": "[ERROR]",
+        "dry_found": "[SIMULACIÓN] Encontrado",
+        "dry_translated": "[SIMULACIÓN] Traducido",
+        "lang_names": {"tr": "Turco", "en": "Inglés", "de": "Alemán", "es": "Español"},
     },
 }
 
@@ -97,30 +164,32 @@ class App(ctk.CTk):
         self.ui_lang = "tr"          # program dili / UI language
         self.T = TEXTS[self.ui_lang]
 
-        self.geometry("700x600")
+        self.geometry("760x620")
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(6, weight=1)
 
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
-        # TR: Üst bar — program dili seçimi ve tema anahtarı
-        # EN: Top bar — program language selector and theme switch
+        # TR: Üst bar — program dili seçimi (bayrak + kod düğmeleri) ve tema anahtarı
+        # EN: Top bar — program language selector (flag + code buttons) and theme switch
         self.top_frame = ctk.CTkFrame(self)
         self.top_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
-        self.top_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        self.top_frame.grid_columnconfigure(1, weight=1)
 
         self.ui_lang_label = ctk.CTkLabel(self.top_frame, text="")
-        self.ui_lang_label.grid(row=0, column=0, padx=(15, 5), pady=10, sticky="w")
+        self.ui_lang_label.grid(row=0, column=0, padx=(15, 10), pady=10, sticky="w")
 
-        self.ui_lang_menu = ctk.CTkOptionMenu(
-            self.top_frame, values=["Türkçe", "English"], command=self.change_ui_lang, width=110
+        self.ui_lang_selector = ctk.CTkSegmentedButton(
+            self.top_frame,
+            values=[label for _, label in LANG_OPTIONS],
+            command=self.change_ui_lang,
         )
-        self.ui_lang_menu.set("Türkçe")
-        self.ui_lang_menu.grid(row=0, column=1, padx=5, pady=10, sticky="w")
+        self.ui_lang_selector.set(CODE_TO_LABEL[self.ui_lang])
+        self.ui_lang_selector.grid(row=0, column=1, padx=10, pady=10, sticky="w")
 
         self.theme_switch = ctk.CTkSwitch(self.top_frame, text="", command=self.toggle_theme)
-        self.theme_switch.grid(row=0, column=3, padx=(5, 15), pady=10, sticky="e")
+        self.theme_switch.grid(row=0, column=2, padx=(10, 15), pady=10, sticky="e")
 
         # TR: Klasör seçimi
         # EN: Folder selection
@@ -153,8 +222,8 @@ class App(ctk.CTk):
         self.dryrun_checkbox = ctk.CTkCheckBox(self.options_frame, text="", variable=self.dryrun_var)
         self.dryrun_checkbox.grid(row=0, column=2, padx=15, pady=10, sticky="w")
 
-        # TR: Çeviri yönü (Çince -> İngilizce / Çince -> Türkçe)
-        # EN: Translation direction (Chinese -> English / Chinese -> Turkish)
+        # TR: Çeviri yönü — hedef dil bayrak + kod düğmeleriyle seçilir
+        # EN: Translation direction — target language chosen via flag + code buttons
         self.lang_frame = ctk.CTkFrame(self)
         self.lang_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
 
@@ -162,8 +231,13 @@ class App(ctk.CTk):
         self.lang_dir_label.grid(row=0, column=0, padx=(15, 10), pady=10, sticky="w")
 
         self.lang_var = ctk.StringVar(value="en")
-        self.lang_menu = ctk.CTkOptionMenu(self.lang_frame, values=[], command=self.change_target_lang)
-        self.lang_menu.grid(row=0, column=1, padx=10, pady=10, sticky="w")
+        self.lang_selector = ctk.CTkSegmentedButton(
+            self.lang_frame,
+            values=[label for _, label in LANG_OPTIONS],
+            command=self.change_target_lang,
+        )
+        self.lang_selector.set(CODE_TO_LABEL[self.lang_var.get()])
+        self.lang_selector.grid(row=0, column=1, padx=10, pady=10, sticky="w")
 
         # TR: Başlat butonu
         # EN: Start button
@@ -183,9 +257,9 @@ class App(ctk.CTk):
     # TR: Arayüz dili / tema yönetimi
     # EN: UI language / theme handling
     # -------------------------------------------------------------
-    def change_ui_lang(self, choice):
+    def change_ui_lang(self, label):
         """TR: Program dilini değiştirir. EN: Switches the program (UI) language."""
-        self.ui_lang = "tr" if choice == "Türkçe" else "en"
+        self.ui_lang = LABEL_TO_CODE[label]
         self.T = TEXTS[self.ui_lang]
         self.refresh_texts()
 
@@ -193,7 +267,7 @@ class App(ctk.CTk):
         """TR: Tüm arayüz metinlerini seçili dile göre günceller.
         EN: Refreshes every UI label according to the selected language."""
         T = self.T
-        self.title(T["title"])
+        self.title(f"{T['title']} v{__version__}")
         self.ui_lang_label.configure(text=T["ui_lang"])
         self.folder_entry.configure(placeholder_text=T["folder_placeholder"])
         self.browse_btn.configure(text=T["select_folder"])
@@ -201,10 +275,6 @@ class App(ctk.CTk):
         self.folder_name_checkbox.configure(text=T["folder_name_check"])
         self.dryrun_checkbox.configure(text=T["dryrun_check"])
         self.lang_dir_label.configure(text=T["translation_direction"])
-
-        current_target = self.lang_var.get()
-        self.lang_menu.configure(values=[T["dir_en"], T["dir_tr"]])
-        self.lang_menu.set(T["dir_en"] if current_target == "en" else T["dir_tr"])
 
         is_light = self.theme_switch.get()
         self.theme_switch.configure(text=T["theme_switch_light"] if not is_light else T["theme_switch_dark"])
@@ -219,9 +289,9 @@ class App(ctk.CTk):
             ctk.set_appearance_mode("Dark")
         self.refresh_texts()
 
-    def change_target_lang(self, choice):
-        """TR: Çeviri hedef dilini (en/tr) günceller. EN: Updates the translation target language (en/tr)."""
-        self.lang_var.set("en" if choice == self.T["dir_en"] else "tr")
+    def change_target_lang(self, label):
+        """TR: Çeviri hedef dilini günceller. EN: Updates the translation target language."""
+        self.lang_var.set(LABEL_TO_CODE[label])
 
     # -------------------------------------------------------------
     # TR: Klasör seçimi / log yardımcı fonksiyonları
@@ -281,7 +351,7 @@ class App(ctk.CTk):
         target_lang = self.lang_var.get()
 
         translator = GoogleTranslator(source='auto', target=target_lang)
-        lang_name = T["lang_target_en"] if target_lang == "en" else T["lang_target_tr"]
+        lang_name = T["lang_names"][target_lang]
         self.log(T["log_header"].format(lang=lang_name))
         if dry_run:
             self.log(T["dryrun_warning"])

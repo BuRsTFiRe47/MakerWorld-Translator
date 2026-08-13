@@ -12,12 +12,15 @@
 |---|---|
 | Modern GUI (CustomTkinter) | Modern GUI (CustomTkinter) |
 | Dark / Light Mode (sağ üstteki anahtar) | Dark / Light Mode (switch, top right) |
-| Program Dili: Türkçe / English seçimi | Program language: Turkish / English selector |
+| Program Dili: 🇹🇷 TR / 🇬🇧 EN / 🇩🇪 DE / 🇪🇸 ES — bayrak+kod butonlarıyla seçim | Program language: 🇹🇷 TR / 🇬🇧 EN / 🇩🇪 DE / 🇪🇸 ES — picked via flag+code buttons |
 | Alt Klasör Tarama (opsiyonel) | Recursive subfolder scan (optional) |
 | Klasör İsimlerini de Çevirme (opsiyonel) | Also translate folder names (optional) |
 | Dry Run — hiçbir şeyi değiştirmeden önizleme | Dry Run — preview changes without renaming anything |
-| Çeviri Yönü: Çince → İngilizce / Çince → Türkçe | Translation direction: Chinese → English / Chinese → Turkish |
+| Çeviri Yönü: Çince → TR / EN / DE / ES — bayrak+kod butonlarıyla seçim | Translation direction: Chinese → TR / EN / DE / ES — picked via flag+code buttons |
 | Çapraz Platform: Windows (.exe) ve macOS Apple Silicon (.app, native ARM) | Cross-platform: Windows (.exe) and macOS Apple Silicon (.app, native ARM) |
+
+🇹🇷 **Not:** Dil seçim butonlarındaki bayrak+kod kombinasyonu, o dili bilmeyen birinin bile arayüzü/kendi dilini bulabilmesi için tasarlandı. (Windows'ta bazı sistem yazı tiplerinde bayrak emojisi düz harf çifti olarak görünebilir — bu yüzden kod da yanına eklendi.)
+🇬🇧 **Note:** The flag+code combo on the language buttons is designed so even someone who doesn't read the language can find their own. (On Windows, some system fonts render flag emoji as plain letter pairs — the code is included alongside it for that reason.)
 
 ---
 
@@ -120,6 +123,13 @@ git push origin v1.1.0
 ```
 
 (Always bump the version number higher than the previous one: v1.0.0 → v1.1.0 → v1.2.0, etc.)
+
+---
+
+## Sürüm Geçmişi / Changelog
+
+🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında listelenir. Güncel sürüm: **v1.5.0**.
+🇬🇧 All changes are listed in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v1.5.0**.
 
 ---
 
