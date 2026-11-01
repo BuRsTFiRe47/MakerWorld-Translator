@@ -118,17 +118,22 @@ class Worker(QThread):
         super().__init__()
         self.params = params
         self._stop = False
+        self.backend = None
 
     def request_stop(self) -> None:
         self._stop = True
+        if self.backend is not None:
+            self.backend.cancelled = True   # bekleme/uykuyu hemen kes / interrupt any rate-limit wait
 
     def run(self) -> None:
         p = self.params
         try:
+            self.backend = core.GoogleBackend()
+            self.backend.on_wait = lambda sec: self.event.emit(core.Event("wait", detail=str(sec)))
             summary = core.run(
                 p["folder"], source=p["source"], target_code=p["target"], recursive=p["recursive"],
                 include_folders=p["folders"], dry_run=p["dry"],
-                translate=core.GoogleBackend().translate, emit=self.event.emit,
+                translate=self.backend.translate, emit=self.event.emit,
                 should_stop=lambda: self._stop, progress=self.progress.emit,
             )
         except Exception as exc:  # e.g. permission error while scanning
@@ -377,6 +382,10 @@ class MainWindow(QWidget):
             self.log(T["log_none"])
         elif k == "stopped":
             self.log(T["log_stopped"])
+        elif k == "wait":
+            self.log(T["log_wait"].format(sec=ev.detail))
+        elif k == "aborted":
+            self.log(f"{T['tag_err']} {T['log_aborted']}")
 
     def on_done(self, s: core.Summary) -> None:
         T = self.T

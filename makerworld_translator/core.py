@@ -107,33 +107,83 @@ def clean_name(name: str) -> str:
 # ---------------------------------------------------------------------------
 # TR: Arka uç  /  EN: Backend
 # ---------------------------------------------------------------------------
-class GoogleBackend:
-    """deep-translator üstünde önbellekli, yeniden denemeli çeviri.
-    Cached, retrying translation on top of deep-translator."""
+class FatalTranslateError(Exception):
+    """TR: Devam etmenin anlamsız olduğu hata (ör. Google istek sınırı aşıldı).
+    EN: Error after which continuing is pointless (e.g. Google rate limit exhausted)."""
 
-    def __init__(self, retries: int = 2, delay: float = 0.8):
+
+def _is_rate_limit(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return type(exc).__name__ == "TooManyRequests" or "too many requests" in text or "429" in text
+
+
+class GoogleBackend:
+    """deep-translator üstünde hız sınırlı, önbellekli, yeniden denemeli çeviri.
+    Throttled, cached, retrying translation on top of deep-translator.
+
+    TR: Google ~5 istek/sn izin verir. Varsayılan 0.3 sn aralık ≈ 3 istek/sn. 429 gelirse
+        3-6-12-24-30 sn bekleyip yeniden dener; hâlâ olmazsa FatalTranslateError fırlatır.
+    EN: Google allows ~5 requests/s. Default 0.3 s spacing ≈ 3 req/s. On a 429 it waits
+        3-6-12-24-30 s and retries; if that still fails it raises FatalTranslateError."""
+
+    def __init__(self, min_interval: float = 0.3, retries: int = 2, delay: float = 0.8,
+                 rate_waits: tuple = (3, 6, 12, 24, 30)):
+        self.min_interval = min_interval
         self.retries = retries
         self.delay = delay
+        self.rate_waits = rate_waits
+        self.on_wait: Optional[Callable[[int], None]] = None   # GUI bilgilendirmesi / GUI notification
+        self.cancelled = False
+        self._last = 0.0
         self._cache: dict[tuple[str, str, str], str] = {}
+
+    def _sleep(self, seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while not self.cancelled:
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(0.1, left))
+
+    def _throttle(self) -> None:
+        wait = self._last + self.min_interval - time.monotonic()
+        if wait > 0:
+            self._sleep(wait)
+        self._last = time.monotonic()
+
+    def _call(self, text: str, source: str, target: str) -> str:
+        from deep_translator import GoogleTranslator
+
+        return GoogleTranslator(source=source, target=target).translate(text) or ""
 
     def translate(self, text: str, source: str, target: str) -> str:
         key = (text, source, target)
         if key in self._cache:
             return self._cache[key]
-        from deep_translator import GoogleTranslator
-
-        last: Optional[Exception] = None
-        for attempt in range(self.retries + 1):
+        rate_tries = 0
+        other_tries = 0
+        while True:
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            self._throttle()
             try:
-                result = GoogleTranslator(source=source, target=target).translate(text) or ""
+                result = self._call(text, source, target)
                 self._cache[key] = result
                 return result
-            except Exception as exc:  # network, rate limit, ...
-                last = exc
-                if attempt < self.retries:
-                    time.sleep(self.delay * (attempt + 1))
-        assert last is not None
-        raise last
+            except Exception as exc:
+                if _is_rate_limit(exc):
+                    if rate_tries >= len(self.rate_waits):
+                        raise FatalTranslateError(str(exc)) from exc
+                    wait = self.rate_waits[rate_tries]
+                    rate_tries += 1
+                    if self.on_wait:
+                        self.on_wait(wait)
+                    self._sleep(wait)
+                else:
+                    if other_tries >= self.retries:
+                        raise
+                    other_tries += 1
+                    self._sleep(self.delay * other_tries)
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +191,7 @@ class GoogleBackend:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Event:
-    kind: str          # renamed | dry | unchanged | error | none | stopped
+    kind: str          # renamed | dry | unchanged | error | none | stopped | wait | aborted
     old: str = ""
     new: str = ""
     detail: str = ""
@@ -154,6 +204,7 @@ class Summary:
     unchanged: int = 0
     errors: int = 0
     stopped: bool = False
+    aborted: bool = False   # istek sınırı yüzünden erken bitti / ended early due to rate limit
 
 
 def collect(base: str, recursive: bool, include_folders: bool) -> tuple[list[str], list[str]]:
@@ -251,7 +302,19 @@ def run(
                 os.rename(path, os.path.join(directory, new_name))
                 summary.renamed += 1
                 emit(Event("renamed", base, new_name))
+        except FatalTranslateError as exc:
+            # TR: Sınır aşıldıysa kalan her dosya için dakikalarca beklemek yerine işi bitir.
+            # EN: Rate limit exhausted: end the job instead of waiting minutes per remaining file.
+            summary.errors += 1
+            summary.aborted = True
+            emit(Event("error", base, detail=str(exc)))
+            emit(Event("aborted"))
+            break
         except Exception as exc:
+            if should_stop():   # iptal sırasında fırlayan hata / error raised while cancelling
+                summary.stopped = True
+                emit(Event("stopped"))
+                break
             summary.errors += 1
             emit(Event("error", base, detail=str(exc)))
         progress(i, len(items))

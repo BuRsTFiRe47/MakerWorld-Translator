@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -119,6 +120,85 @@ class CoreTests(unittest.TestCase):
             summary, events = self.run_core(d)
             self.assertEqual(summary.total, 0)
             self.assertEqual(events[0].kind, "none")
+
+
+class TooManyRequests(Exception):
+    """Same class name deep-translator raises on HTTP 429."""
+
+
+class FlakyBackend(core.GoogleBackend):
+    def __init__(self, failures, exc):
+        super().__init__(min_interval=0, delay=0, rate_waits=(0, 0, 0))
+        self.failures, self.exc, self.calls = failures, exc, 0
+
+    def _call(self, text, source, target):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.exc
+        return "ok"
+
+
+class BackendTests(unittest.TestCase):
+    RATE = "Server Error: You made too many requests to the server."
+
+    def test_retries_after_rate_limit_and_notifies(self):
+        b = FlakyBackend(2, TooManyRequests(self.RATE))
+        waits = []
+        b.on_wait = waits.append
+        self.assertEqual(b.translate("龙", "zh-CN", "en"), "ok")
+        self.assertEqual(b.calls, 3)
+        self.assertEqual(len(waits), 2)
+
+    def test_rate_limit_exhausted_is_fatal(self):
+        b = FlakyBackend(99, TooManyRequests(self.RATE))
+        with self.assertRaises(core.FatalTranslateError):
+            b.translate("龙", "zh-CN", "en")
+        self.assertEqual(b.calls, 4)  # first try + 3 waits
+
+    def test_other_errors_retry_then_raise_original(self):
+        b = FlakyBackend(99, RuntimeError("boom"))
+        with self.assertRaises(RuntimeError):
+            b.translate("龙", "zh-CN", "en")
+        self.assertEqual(b.calls, 3)  # first try + 2 retries
+
+    def test_cache_avoids_second_request(self):
+        b = FlakyBackend(0, RuntimeError("unused"))
+        b.translate("龙", "zh-CN", "en")
+        b.translate("龙", "zh-CN", "en")
+        self.assertEqual(b.calls, 1)
+
+    def test_requests_are_spaced(self):
+        b = FlakyBackend(0, RuntimeError("unused"))
+        b.min_interval = 0.1
+        start = time.monotonic()
+        for text in ("龙", "灯", "模型"):
+            b.translate(text, "zh-CN", "en")
+        self.assertGreaterEqual(time.monotonic() - start, 0.2 - 0.02)
+
+    def test_cancel_interrupts_long_wait(self):
+        b = FlakyBackend(99, TooManyRequests(self.RATE))
+        b.rate_waits = (30,)
+        b.on_wait = lambda s: setattr(b, "cancelled", True)
+        start = time.monotonic()
+        with self.assertRaises(RuntimeError):
+            b.translate("龙", "zh-CN", "en")
+        self.assertLess(time.monotonic() - start, 2)
+
+    def test_job_aborts_cleanly_on_fatal_rate_limit(self):
+        def limited(*_):
+            raise core.FatalTranslateError(self.RATE)
+        with tempfile.TemporaryDirectory() as d:
+            for n in ["龙.3mf", "灯.3mf"]:
+                open(os.path.join(d, n), "w").close()
+            events = []
+            summary = core.run(
+                d, source=None, target_code="en", recursive=False, include_folders=False,
+                dry_run=False, translate=limited, emit=events.append,
+            )
+            self.assertTrue(summary.aborted)
+            self.assertEqual(events[-1].kind, "aborted")
+            self.assertEqual(sorted(os.listdir(d)), ["灯.3mf", "龙.3mf"])  # nothing renamed
+            self.assertEqual(summary.errors, 1)  # stopped after the first failure
 
 
 if __name__ == "__main__":

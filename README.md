@@ -54,8 +54,8 @@ Testler / Tests (internet ve GUI gerekmez / no network or GUI needed):
 python -m unittest discover -s tests -v
 ```
 
-🇹🇷 Çeviri için internet bağlantısı gerekir (Google Translate, `deep-translator` üzerinden).
-🇬🇧 An internet connection is required for translation (Google Translate via `deep-translator`).
+🇹🇷 Çeviri için internet bağlantısı gerekir (Google Translate, `deep-translator` üzerinden). Google'ın istek sınırı (~5/sn) nedeniyle uygulama istekleri saniyede ~3'e yavaşlatır; büyük klasörlerde birkaç dakika sürebilir. Sınır aşılırsa kendisi bekleyip yeniden dener, olmazsa temiz şekilde durur — birkaç dakika sonra tekrar çalıştırın.
+🇬🇧 An internet connection is required for translation (Google Translate via `deep-translator`). Because of Google's rate limit (~5/s) the app throttles requests to ~3/s, so big folders can take a few minutes. If the limit is hit it waits and retries by itself, and if that fails it stops cleanly — just run it again a few minutes later.
 
 ---
 
@@ -133,8 +133,8 @@ git push
 
 ## Sürüm Geçmişi / Changelog
 
-🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında. Güncel sürüm: **v2.0.0**.
-🇬🇧 All changes are in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v2.0.0**.
+🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında. Güncel sürüm: **v2.0.1**.
+🇬🇧 All changes are in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v2.0.1**.
 
 ---
 

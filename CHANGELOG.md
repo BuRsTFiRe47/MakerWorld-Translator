@@ -3,6 +3,28 @@
 TR: Bu proje [Semantic Versioning](https://semver.org/lang/tr/) kullanır.
 EN: This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-11-01
+
+### TR — Düzeltmeler
+- **Google "Too many requests" (istek sınırı) hatası giderildi.** Google yaklaşık saniyede 5 isteğe izin veriyor; uygulama isimleri arka arkaya hızlıca gönderdiği için çok dosyalı klasörlerde sınıra takılıyordu.
+  - İstekler artık saniyede ~3 ile sınırlandırılıyor.
+  - Yine de sınır gelirse 3-6-12-24-30 sn bekleyip otomatik yeniden deniyor; bekleme sırasında logda bilgi veriliyor.
+  - Sınır tamamen aşılırsa kalan dosyalar için dakikalarca beklemek yerine işlem temiz şekilde durur. Hiçbir dosya bozulmaz; birkaç dakika sonra tekrar çalıştırınca çevrilmemiş dosyalardan devam eder.
+  - **Durdur** butonu bekleme sırasında da anında çalışır.
+- Yeni log mesajları 5 dilde (TR/EN/DE/ES/FR).
+- Bu davranış için ağ gerektirmeyen birim testleri eklendi (toplam 19).
+
+### EN — Fixed
+- **Fixed the Google "Too many requests" (rate limit) error.** Google allows about 5 requests per second; the app sent names back-to-back, so folders with many files hit the limit.
+  - Requests are now throttled to ~3 per second.
+  - If the limit is still hit, it waits 3-6-12-24-30 s and retries automatically, and the log says so while waiting.
+  - If the limit is fully exhausted, the job stops cleanly instead of waiting minutes for every remaining file. No file is damaged; run it again a few minutes later and it continues with the files not yet translated.
+  - The **Stop** button now works instantly even during a wait.
+- New log messages in 5 languages (TR/EN/DE/ES/FR).
+- Added network-free unit tests for this behaviour (19 in total).
+
+---
+
 ## [2.0.0] - 2026-11-01
 
 ### TR — Değişenler
