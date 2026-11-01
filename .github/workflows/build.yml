@@ -51,7 +51,7 @@ jobs:
 
   build-macos-arm64:
     needs: test
-    runs-on: macos-14  # Apple Silicon (M1/M2/M3/M4) runner
+    runs-on: macos-15  # Apple Silicon (arm64) runner; macos-14 was retired on 2026-11-02
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

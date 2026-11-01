@@ -13,6 +13,7 @@ EN: This project uses [Semantic Versioning](https://semver.org/).
   - **Durdur** butonu bekleme sırasında da anında çalışır.
 - Yeni log mesajları 5 dilde (TR/EN/DE/ES/FR).
 - Bu davranış için ağ gerektirmeyen birim testleri eklendi (toplam 19).
+- **CI:** GitHub `macos-14` runner'ını emekliye ayırdığı için (2 Kasım 2026) macOS derlemesi `macos-15` (Apple Silicon) runner'ına taşındı.
 
 ### EN — Fixed
 - **Fixed the Google "Too many requests" (rate limit) error.** Google allows about 5 requests per second; the app sent names back-to-back, so folders with many files hit the limit.
@@ -22,6 +23,7 @@ EN: This project uses [Semantic Versioning](https://semver.org/).
   - The **Stop** button now works instantly even during a wait.
 - New log messages in 5 languages (TR/EN/DE/ES/FR).
 - Added network-free unit tests for this behaviour (19 in total).
+- **CI:** the macOS build moved to the `macos-15` (Apple Silicon) runner because GitHub retired `macos-14` on 2 November 2026.
 
 ---
 
