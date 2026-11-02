@@ -3,6 +3,30 @@
 TR: Bu proje [Semantic Versioning](https://semver.org/lang/tr/) kullanır.
 EN: This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-11-02
+
+### TR — Değişenler
+- **Çeviri motoru değişti.** v2.0.1'deki yavaşlatma Google'ın istek sınırını yine de aşıyordu, çünkü `deep-translator` Google'ın web arayüzünü kazıyor ve her dosya adı için ayrı istek atıyordu. Artık:
+  - İsimler **toplu** çevrilir (tek istekte ~25 isim). 10 dosya = 1 istek.
+  - **Üç motor** var: Google, Microsoft (Edge çeviri uç noktası), MyMemory. Hiçbiri API anahtarı istemez.
+  - Varsayılan **Otomatik** modda biri istek sınırına takılırsa kısa bekleyip yeniden dener, olmazsa **otomatik olarak sonraki motora geçer** (logda görünür). Motoru elle de seçebilirsiniz.
+  - Arayüze **motor seçici** ve isteğe bağlı **MyMemory e-posta** alanı eklendi (günlük limiti ~10 kat artırır). Seçimler hatırlanır.
+- `deep-translator` bağımlılığı kaldırıldı; motorlar yalnızca standart kütüphane kullanır (paket boyutu küçüldü).
+- Ağ düzeyinde hata (motora ulaşılamıyor) da sonraki motora geçişi tetikler.
+- Log mesajları 5 dilde güncellendi. Birim test sayısı 33'e çıktı (sahte HTTP yanıtlarıyla, ağ gerektirmez).
+
+### EN — Changed
+- **New translation backend.** The v2.0.1 throttling still tripped Google's limit because `deep-translator` scrapes Google's web UI and sends one request per file name. Now:
+  - Names are translated **in batches** (~25 names per request). 10 files = 1 request.
+  - **Three engines**: Google, Microsoft (Edge translate endpoint), MyMemory. None needs an API key.
+  - In the default **Auto** mode, if one hits its rate limit the app waits briefly, retries, then **fails over to the next engine automatically** (shown in the log). You can also pick an engine manually.
+  - New **engine selector** and an optional **MyMemory email** field (raises the daily limit ~10x). Choices are remembered.
+- Dropped the `deep-translator` dependency; the engines use only the standard library (smaller bundle).
+- A network-level failure (engine unreachable) also triggers failover.
+- Log messages updated in 5 languages. Unit tests grew to 33 (fake HTTP responses, no network needed).
+
+---
+
 ## [2.0.1] - 2026-11-01
 
 ### TR — Düzeltmeler

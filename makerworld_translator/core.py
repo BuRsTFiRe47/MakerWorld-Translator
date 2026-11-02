@@ -10,9 +10,13 @@ EN: Script detection, name sanitising, collision-safe renaming and the Google
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -105,38 +109,222 @@ def clean_name(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# TR: Arka uç  /  EN: Backend
+# TR: Çeviri motorları  /  EN: Translation engines
+#
+# TR: Üç motor, hepsi API anahtarsız: Google (toplu), Microsoft (Edge çeviri uç
+#     noktası, toplu), MyMemory (tek tek). "Otomatik" modda sırayla denenir;
+#     biri istek sınırına takılırsa sonrakine geçilir.
+# EN: Three engines, none needs an API key: Google (batched), Microsoft (Edge
+#     translate endpoint, batched), MyMemory (one by one). "Auto" tries them in
+#     that order and fails over to the next when one hits its rate limit.
 # ---------------------------------------------------------------------------
 class FatalTranslateError(Exception):
-    """TR: Devam etmenin anlamsız olduğu hata (ör. Google istek sınırı aşıldı).
-    EN: Error after which continuing is pointless (e.g. Google rate limit exhausted)."""
+    """TR: Hiçbir motor kullanılamıyor (limit veya bağlantı). EN: No engine is usable (limit or connection)."""
 
 
-def _is_rate_limit(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return type(exc).__name__ == "TooManyRequests" or "too many requests" in text or "429" in text
+class RateLimited(Exception):
+    """TR: Motor "çok fazla istek / engellendi" dedi. retry=False: beklemek işe yaramaz (günlük kota).
+    EN: Engine said "too many requests / blocked". retry=False: waiting will not help (daily quota)."""
+
+    def __init__(self, message: str = "", retry: bool = True):
+        super().__init__(message)
+        self.retry = retry
 
 
-class GoogleBackend:
-    """deep-translator üstünde hız sınırlı, önbellekli, yeniden denemeli çeviri.
-    Throttled, cached, retrying translation on top of deep-translator.
+class BatchMismatch(Exception):
+    """TR: Toplu yanıt isteğe uymadı; tek tek denenecek. EN: Batch reply did not line up; retry one by one."""
 
-    TR: Google ~5 istek/sn izin verir. Varsayılan 0.3 sn aralık ≈ 3 istek/sn. 429 gelirse
-        3-6-12-24-30 sn bekleyip yeniden dener; hâlâ olmazsa FatalTranslateError fırlatır.
-    EN: Google allows ~5 requests/s. Default 0.3 s spacing ≈ 3 req/s. On a 429 it waits
-        3-6-12-24-30 s and retries; if that still fails it raises FatalTranslateError."""
 
-    def __init__(self, min_interval: float = 0.3, retries: int = 2, delay: float = 0.8,
-                 rate_waits: tuple = (3, 6, 12, 24, 30)):
-        self.min_interval = min_interval
+_SSL_CONTEXT = None
+
+
+def _ssl_context():
+    """TR: Derlenmiş (PyInstaller) uygulamalarda, özellikle macOS'ta, sistem sertifika yolu boş olabilir;
+        bu yüzden certifi'nin paketini kullanırız.
+    EN: In frozen (PyInstaller) apps, especially on macOS, the default CA path can be empty,
+        so we use certifi's bundle."""
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        import ssl
+        try:
+            import certifi
+            _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            _SSL_CONTEXT = ssl.create_default_context()
+    return _SSL_CONTEXT
+
+
+def http_request(url, data=None, headers=None, method=None, timeout=15):
+    """TR: Standart kütüphane ile HTTP. (durum_kodu, gövde) döner. EN: Stdlib HTTP. Returns (status, body)."""
+    hdrs = {"User-Agent": "Mozilla/5.0 (MakerWorldTranslator)"}
+    hdrs.update(headers or {})
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+
+
+class Engine:
+    name = "?"
+    max_batch = 1        # tek istekte en fazla kaç isim / names per request
+    max_chars = 600      # tek istekte en fazla karakter / characters per request
+    min_interval = 0.4   # istekler arası saniye / seconds between requests
+
+    def __init__(self, http=http_request):
+        self.http = http
+
+    def translate_many(self, texts: list, source: str, target: str) -> list:
+        raise NotImplementedError
+
+
+class GoogleEngine(Engine):
+    """translate.googleapis.com (gtx). İsimler satır sonuyla birleştirilip tek istekte gider.
+    Names are joined with newlines and sent in a single request."""
+
+    name = "Google"
+    max_batch = 25
+    min_interval = 0.5
+    URL = "https://translate.googleapis.com/translate_a/single"
+
+    def translate_many(self, texts, source, target):
+        query = urllib.parse.urlencode(
+            {"client": "gtx", "sl": source, "tl": target, "dt": "t", "q": "\n".join(texts)}
+        )
+        status, body = self.http(f"{self.URL}?{query}")
+        if status in (403, 429, 503) or "unusual traffic" in body.lower():
+            raise RateLimited(f"Google: HTTP {status}")
+        if status != 200:
+            raise RuntimeError(f"Google: HTTP {status}")
+        try:
+            data = json.loads(body)
+            joined = "".join(seg[0] for seg in data[0] if seg and seg[0])
+        except (ValueError, TypeError, IndexError, KeyError):
+            raise RuntimeError("Google: unexpected response")
+        if len(texts) == 1:
+            return [joined.strip()]
+        parts = [p.strip() for p in joined.strip("\n").split("\n")]
+        if len(parts) != len(texts):
+            raise BatchMismatch()
+        return parts
+
+
+class MicrosoftEngine(Engine):
+    """Edge tarayıcısının çeviri uç noktası; JWT'yi kendisi alır, toplu JSON destekler.
+    The Edge browser's translate endpoint; fetches its own JWT, supports JSON batches."""
+
+    name = "Microsoft"
+    max_batch = 40
+    min_interval = 0.4
+    AUTH_URL = "https://edge.microsoft.com/translate/auth"
+    API_URL = "https://api-edge.cognitive.microsofttranslator.com/translate"
+    LANG = {"zh-CN": "zh-Hans", "iw": "he"}
+
+    def __init__(self, http=http_request, clock=time.monotonic):
+        super().__init__(http)
+        self._clock = clock
+        self._token = ""
+        self._token_at = 0.0
+
+    def _get_token(self, force=False):
+        if force or not self._token or self._clock() - self._token_at > 480:
+            status, body = self.http(self.AUTH_URL)
+            if status in (403, 429):
+                raise RateLimited(f"Microsoft: auth HTTP {status}")
+            if status != 200 or not body.strip():
+                raise RuntimeError(f"Microsoft: auth HTTP {status}")
+            self._token, self._token_at = body.strip(), self._clock()
+        return self._token
+
+    def translate_many(self, texts, source, target):
+        params = {"api-version": "3.0", "to": self.LANG.get(target, target)}
+        if source != "auto":
+            params["from"] = self.LANG.get(source, source)
+        url = f"{self.API_URL}?{urllib.parse.urlencode(params)}"
+        payload = json.dumps([{"Text": t} for t in texts]).encode("utf-8")
+        status, body = 0, ""
+        for attempt in (0, 1):   # TR: 401 → jetonu yenile, bir kez daha dene / EN: 401 → refresh token once
+            status, body = self.http(
+                url, data=payload, method="POST",
+                headers={"Authorization": f"Bearer {self._get_token(force=attempt == 1)}",
+                         "Content-Type": "application/json"},
+            )
+            if status != 401:
+                break
+        if status in (403, 429):
+            raise RateLimited(f"Microsoft: HTTP {status}")
+        if status != 200:
+            raise RuntimeError(f"Microsoft: HTTP {status}")
+        try:
+            out = [item["translations"][0]["text"] for item in json.loads(body)]
+        except (ValueError, TypeError, IndexError, KeyError):
+            raise RuntimeError("Microsoft: unexpected response")
+        if len(out) != len(texts):
+            raise BatchMismatch()
+        return out
+
+
+class MyMemoryEngine(Engine):
+    """api.mymemory.translated.net — anonim ~5000 karakter/gün; e-posta verilirse ~50000.
+    Anonymous ~5000 chars/day; ~50000 when an email is supplied."""
+
+    name = "MyMemory"
+    max_batch = 1
+    min_interval = 0.6
+    URL = "https://api.mymemory.translated.net/get"
+
+    def __init__(self, http=http_request, email: str = ""):
+        super().__init__(http)
+        self.email = email
+
+    def translate_many(self, texts, source, target):
+        (text,) = texts
+        if len(text.encode("utf-8")) > 480:
+            raise ValueError("name too long for MyMemory")
+        src = "Autodetect" if source == "auto" else {"iw": "he"}.get(source, source)
+        params = {"q": text, "langpair": f"{src}|{target}"}
+        if self.email:
+            params["de"] = self.email
+        status, body = self.http(f"{self.URL}?{urllib.parse.urlencode(params)}")
+        if status == 429:
+            raise RateLimited("MyMemory: HTTP 429", retry=False)
+        if status != 200:
+            raise RuntimeError(f"MyMemory: HTTP {status}")
+        try:
+            data = json.loads(body)
+            translated = data["responseData"]["translatedText"]
+        except (ValueError, TypeError, KeyError):
+            raise RuntimeError("MyMemory: unexpected response")
+        if "MYMEMORY WARNING" in str(translated).upper() or str(data.get("responseStatus")) == "429":
+            raise RateLimited(f"MyMemory: {translated}", retry=False)
+        return [translated]
+
+
+class TranslatorChain:
+    """TR: Motorları sırayla dener, hız sınırlar, önbellekler, toplu isteği (prefetch) yönetir.
+        Motor limite takılırsa kısa bekleyip yeniden dener, olmazsa sonraki motora geçer.
+    EN: Tries engines in order, throttles, caches and runs batched prefetch. On a rate limit it
+        waits briefly and retries, then fails over to the next engine."""
+
+    def __init__(self, engines, *, rate_waits=(3, 8), final_waits=(3, 6, 12, 24, 30),
+                 retries: int = 2, delay: float = 0.8):
+        if not engines:
+            raise ValueError("at least one engine is required")
+        self.engines = list(engines)
+        self.rate_waits = rate_waits      # başka motor varken / while another engine is left
+        self.final_waits = final_waits    # son motorda / on the last engine
         self.retries = retries
         self.delay = delay
-        self.rate_waits = rate_waits
-        self.on_wait: Optional[Callable[[int], None]] = None   # GUI bilgilendirmesi / GUI notification
+        self.on_wait: Optional[Callable[[str, int], None]] = None
+        self.on_switch: Optional[Callable[[str, str], None]] = None
         self.cancelled = False
-        self._last = 0.0
-        self._cache: dict[tuple[str, str, str], str] = {}
+        self.active = 0
+        self._last: dict = {}
+        self._cache: dict = {}
+        self._last_error = ""
 
+    # --- timing ----------------------------------------------------------
     def _sleep(self, seconds: float) -> None:
         end = time.monotonic() + seconds
         while not self.cancelled:
@@ -145,45 +333,119 @@ class GoogleBackend:
                 return
             time.sleep(min(0.1, left))
 
-    def _throttle(self) -> None:
-        wait = self._last + self.min_interval - time.monotonic()
+    def _throttle(self, engine) -> None:
+        wait = self._last.get(engine.name, 0.0) + engine.min_interval - time.monotonic()
         if wait > 0:
             self._sleep(wait)
-        self._last = time.monotonic()
+        self._last[engine.name] = time.monotonic()
 
-    def _call(self, text: str, source: str, target: str) -> str:
-        from deep_translator import GoogleTranslator
-
-        return GoogleTranslator(source=source, target=target).translate(text) or ""
+    # --- core ------------------------------------------------------------
+    def _attempt(self, texts, source, target):
+        while True:
+            engine = self.engines[self.active]
+            if len(texts) > engine.max_batch:
+                out: list = []
+                for i in range(0, len(texts), engine.max_batch):
+                    out += self._attempt(texts[i:i + engine.max_batch], source, target)
+                return out
+            waits = self.final_waits if self.active == len(self.engines) - 1 else self.rate_waits
+            rate_tries = other_tries = 0
+            while True:
+                if self.cancelled:
+                    raise RuntimeError("cancelled")
+                self._throttle(engine)
+                try:
+                    return engine.translate_many(texts, source, target)
+                except BatchMismatch:
+                    if len(texts) == 1:
+                        raise RuntimeError(f"{engine.name}: unexpected response")
+                    return [self._attempt([t], source, target)[0] for t in texts]
+                except RateLimited as exc:
+                    self._last_error = str(exc)
+                    if not exc.retry or rate_tries >= len(waits):
+                        break
+                    wait = waits[rate_tries]
+                    rate_tries += 1
+                    if self.on_wait:
+                        self.on_wait(engine.name, wait)
+                    self._sleep(wait)
+                except OSError as exc:   # TR: ağ düzeyi hata: motora ulaşılamıyor / EN: network-level: engine unreachable
+                    self._last_error = f"{engine.name}: {exc}"
+                    if other_tries >= self.retries:
+                        break
+                    other_tries += 1
+                    self._sleep(self.delay * other_tries)
+                except Exception:
+                    if other_tries >= self.retries:
+                        raise
+                    other_tries += 1
+                    self._sleep(self.delay * other_tries)
+            # TR: Bu motor pes etti → sonrakine geç, yoksa işi bırak
+            # EN: This engine gave up → fail over, or give up entirely
+            if self.active + 1 >= len(self.engines):
+                raise FatalTranslateError(self._last_error or "no translation engine available")
+            old = engine.name
+            self.active += 1
+            if self.on_switch:
+                self.on_switch(old, self.engines[self.active].name)
 
     def translate(self, text: str, source: str, target: str) -> str:
         key = (text, source, target)
         if key in self._cache:
             return self._cache[key]
-        rate_tries = 0
-        other_tries = 0
-        while True:
-            if self.cancelled:
-                raise RuntimeError("cancelled")
-            self._throttle()
-            try:
-                result = self._call(text, source, target)
-                self._cache[key] = result
-                return result
-            except Exception as exc:
-                if _is_rate_limit(exc):
-                    if rate_tries >= len(self.rate_waits):
-                        raise FatalTranslateError(str(exc)) from exc
-                    wait = self.rate_waits[rate_tries]
-                    rate_tries += 1
-                    if self.on_wait:
-                        self.on_wait(wait)
-                    self._sleep(wait)
-                else:
-                    if other_tries >= self.retries:
+        out = self._attempt([text], source, target)[0]
+        self._cache[key] = out
+        return out
+
+    def _chunks(self, texts):
+        engine = self.engines[self.active]
+        chunk: list = []
+        size = 0
+        for t in texts:
+            if chunk and (len(chunk) >= engine.max_batch or size + len(t) > engine.max_chars):
+                yield chunk
+                chunk, size = [], 0
+            chunk.append(t)
+            size += len(t)
+        if chunk:
+            yield chunk
+
+    def prefetch(self, items, target: str) -> None:
+        """TR: Tüm isimleri en az sayıda istekle önceden çevirip önbelleğe koyar.
+        EN: Translates all names up front in as few requests as possible and caches them."""
+        groups: dict = {}
+        for text, src in items:
+            if (text, src, target) in self._cache:
+                continue
+            bucket = groups.setdefault(src, [])
+            if text not in bucket:
+                bucket.append(text)
+        for src, texts in groups.items():
+            for chunk in self._chunks(texts):
+                try:
+                    out = self._attempt(chunk, src, target)
+                except FatalTranslateError:
+                    raise
+                except Exception:
+                    if self.cancelled:
                         raise
-                    other_tries += 1
-                    self._sleep(self.delay * other_tries)
+                    continue   # TR: tek tek yol bu isimler için hatayı raporlar / EN: the per-name path will report it
+                for t, o in zip(chunk, out):
+                    if o:
+                        self._cache[(t, src, target)] = o
+
+
+ENGINE_CHOICES = ("auto", "google", "microsoft", "mymemory")
+
+
+def build_chain(choice: str = "auto", email: str = "", http=http_request) -> TranslatorChain:
+    makers = {
+        "google": lambda: GoogleEngine(http),
+        "microsoft": lambda: MicrosoftEngine(http),
+        "mymemory": lambda: MyMemoryEngine(http, email=email.strip()),
+    }
+    order = ["google", "microsoft", "mymemory"] if choice == "auto" else [choice]
+    return TranslatorChain([makers[k]() for k in order])
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +453,7 @@ class GoogleBackend:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Event:
-    kind: str          # renamed | dry | unchanged | error | none | stopped | wait | aborted
+    kind: str          # renamed | dry | unchanged | error | none | stopped | wait | switch | aborted
     old: str = ""
     new: str = ""
     detail: str = ""
@@ -263,6 +525,7 @@ def run(
     emit: Callable[[Event], None],
     should_stop: Callable[[], bool] = lambda: False,
     progress: Callable[[int, int], None] = lambda done, total: None,
+    prefetch: Optional[Callable[[list], None]] = None,
 ) -> Summary:
     """TR: Ana iş. source=None → otomatik (Latin olmayan tüm Asya yazıları).
     EN: Main job. source=None → auto (all non-Latin Asian scripts)."""
@@ -278,6 +541,30 @@ def run(
         return summary
 
     taken: set[str] = set()
+
+    # TR: Önce tüm isimler toplu çevrilir (az istek = limite takılmaz); döngü önbellekten okur.
+    # EN: Translate all names in batches first (few requests = no rate limit); the loop reads the cache.
+    if prefetch is not None:
+        pairs = []
+        for path, is_dir in items:
+            b = os.path.basename(path)
+            stem = b if is_dir else os.path.splitext(b)[0]
+            pairs.append((stem, source.code if source else detect_source(stem)))
+        try:
+            prefetch(pairs)
+        except FatalTranslateError as exc:
+            summary.errors += 1
+            summary.aborted = True
+            emit(Event("error", detail=str(exc)))
+            emit(Event("aborted"))
+            return summary
+        except Exception:
+            if should_stop():
+                summary.stopped = True
+                emit(Event("stopped"))
+                return summary
+            raise
+
     progress(0, len(items))
     for i, (path, is_dir) in enumerate(items, 1):
         if should_stop():

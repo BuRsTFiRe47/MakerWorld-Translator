@@ -6,5 +6,5 @@ EN: Bulk-translates and renames files/folders named in non-Latin Asian
     scripts (Chinese, Japanese, Korean, Thai, Hindi, ...).
 """
 
-__version__ = "2.0.1"
+__version__ = "2.1.0"
 GITHUB_URL = "https://github.com/BuRsTFiRe47/MakerWorld-Translator"

@@ -12,6 +12,7 @@
 |---|---|
 | Modern Qt arayüzü (PySide6), **koyu tema varsayılan** | Modern Qt UI (PySide6), **dark theme by default** |
 | Kaynak dil: Otomatik veya tek tek seçim (aşağıdaki tablo) | Source language: Auto or pick one (table below) |
+| Çeviri motoru: Otomatik (Google → Microsoft → MyMemory), toplu istek ve otomatik yedekleme | Translation engine: Auto (Google → Microsoft → MyMemory), batched requests with automatic failover |
 | Hedef dil: 🇹🇷 TR / 🇬🇧 EN / 🇩🇪 DE / 🇪🇸 ES / 🇫🇷 FR | Target language: 🇹🇷 TR / 🇬🇧 EN / 🇩🇪 DE / 🇪🇸 ES / 🇫🇷 FR |
 | Program dili aynı beş dil; seçimler hatırlanır | Program language offers the same five; choices are remembered |
 | Alt klasör tarama (opsiyonel) | Recursive subfolder scan (optional) |
@@ -54,8 +55,24 @@ Testler / Tests (internet ve GUI gerekmez / no network or GUI needed):
 python -m unittest discover -s tests -v
 ```
 
-🇹🇷 Çeviri için internet bağlantısı gerekir (Google Translate, `deep-translator` üzerinden). Google'ın istek sınırı (~5/sn) nedeniyle uygulama istekleri saniyede ~3'e yavaşlatır; büyük klasörlerde birkaç dakika sürebilir. Sınır aşılırsa kendisi bekleyip yeniden dener, olmazsa temiz şekilde durur — birkaç dakika sonra tekrar çalıştırın.
-🇬🇧 An internet connection is required for translation (Google Translate via `deep-translator`). Because of Google's rate limit (~5/s) the app throttles requests to ~3/s, so big folders can take a few minutes. If the limit is hit it waits and retries by itself, and if that fails it stops cleanly — just run it again a few minutes later.
+### Çeviri motorları / Translation engines
+
+🇹🇷 Çeviri için internet gerekir. API anahtarı gerekmez. Uygulama üç motor kullanır ve **Otomatik** modda sırayla dener:
+1. **Google** — isimleri tek tek değil **toplu** (tek istekte ~25 isim) gönderir; bu yüzden istek sınırına çok daha az takılır.
+2. **Microsoft** (Edge çeviri uç noktası) — toplu, genelde en rahat çalışan motor.
+3. **MyMemory** — son çare; anonim ~5000 karakter/gün. Kutuya e-posta adresinizi yazarsanız günlük limit ~50000 karaktere çıkar.
+
+Bir motor "çok fazla istek" derse kısa süre bekleyip yeniden dener, olmazsa **otomatik olarak sonraki motora geçer** ve logda yazar. Hepsi kullanılamazsa işlem temiz durur; birkaç saat sonra tekrar çalıştırınca çevrilmemiş dosyalardan devam eder. İsterseniz motoru elle de seçebilirsiniz.
+
+🇬🇧 Translation needs an internet connection but no API key. The app has three engines and tries them in order in **Auto** mode:
+1. **Google** — sends names **in batches** (~25 names per request) instead of one by one, so it hits the rate limit far less.
+2. **Microsoft** (the Edge translate endpoint) — batched, usually the most relaxed engine.
+3. **MyMemory** — last resort; ~5000 chars/day anonymously. Enter your email in the box to raise the daily limit to ~50000 characters.
+
+If an engine says "too many requests" the app waits briefly and retries, then **fails over to the next engine automatically** and says so in the log. If none is usable the job stops cleanly; run it again a few hours later and it continues with the files not yet translated. You can also pick one engine manually.
+
+🇹🇷 **Not:** Bunlar resmi anahtarlı API'ler değil, ücretsiz genel uç noktalardır; sağlayıcılar bunları önceden haber vermeden değiştirebilir veya kısıtlayabilir. Bu yüzden çok motorlu yedekleme var.
+🇬🇧 **Note:** These are free public endpoints, not official keyed APIs; providers may change or restrict them without notice, which is why there are several engines with failover.
 
 ---
 
@@ -65,7 +82,7 @@ python -m unittest discover -s tests -v
 MakerWorld-Translator/
 ├── main.py                      # giriş noktası / entry point
 ├── makerworld_translator/
-│   ├── core.py                  # yazı tespiti, yeniden adlandırma, çeviri arka ucu / core logic
+│   ├── core.py                  # yazı tespiti, yeniden adlandırma, çeviri motorları / core logic + engines
 │   ├── gui.py                   # PySide6 arayüzü / PySide6 UI
 │   └── i18n.py                  # TR/EN/DE/ES/FR metinler / UI strings
 ├── tests/test_core.py
@@ -133,8 +150,8 @@ git push
 
 ## Sürüm Geçmişi / Changelog
 
-🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında. Güncel sürüm: **v2.0.1**.
-🇬🇧 All changes are in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v2.0.1**.
+🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında. Güncel sürüm: **v2.1.0**.
+🇬🇧 All changes are in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v2.1.0**.
 
 ---
 

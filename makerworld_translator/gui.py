@@ -128,13 +128,15 @@ class Worker(QThread):
     def run(self) -> None:
         p = self.params
         try:
-            self.backend = core.GoogleBackend()
-            self.backend.on_wait = lambda sec: self.event.emit(core.Event("wait", detail=str(sec)))
+            self.backend = core.build_chain(p["engine"], p["email"])
+            self.backend.on_wait = lambda name, sec: self.event.emit(core.Event("wait", old=name, detail=str(sec)))
+            self.backend.on_switch = lambda old, new: self.event.emit(core.Event("switch", old=old, new=new))
             summary = core.run(
                 p["folder"], source=p["source"], target_code=p["target"], recursive=p["recursive"],
                 include_folders=p["folders"], dry_run=p["dry"],
-                translate=self.backend.translate, emit=self.event.emit,
-                should_stop=lambda: self._stop, progress=self.progress.emit,
+                translate=self.backend.translate,
+                prefetch=lambda pairs: self.backend.prefetch(pairs, p["target"]),
+                emit=self.event.emit, should_stop=lambda: self._stop, progress=self.progress.emit,
             )
         except Exception as exc:  # e.g. permission error while scanning
             self.event.emit(core.Event("error", detail=str(exc)))
@@ -205,6 +207,21 @@ class MainWindow(QWidget):
         row.addWidget(self.src_combo, 1)
         root.addLayout(row)
 
+        # Row 3b: translation engine + optional MyMemory email
+        row = QHBoxLayout()
+        self.lbl_eng = QLabel()
+        self.eng_combo = QComboBox()
+        self.eng_combo.addItem("", "auto")
+        for code, label in (("google", "Google"), ("microsoft", "Microsoft"), ("mymemory", "MyMemory")):
+            self.eng_combo.addItem(label, code)
+        saved_eng = str(settings.value("engine", "auto"))
+        self.eng_combo.setCurrentIndex(max(self.eng_combo.findData(saved_eng), 0))
+        self.email_edit = QLineEdit(str(settings.value("email", "")))
+        row.addWidget(self.lbl_eng)
+        row.addWidget(self.eng_combo, 1)
+        row.addWidget(self.email_edit, 1)
+        root.addLayout(row)
+
         # Row 4: target language
         row = QHBoxLayout()
         self.lbl_dst = QLabel()
@@ -260,9 +277,10 @@ class MainWindow(QWidget):
         # EN: Align labels to the longest text across all languages (no clipping).
         fm = self.lbl_ui.fontMetrics()
         label_w = max(
-            fm.horizontalAdvance(STRINGS[c][k]) for c in LANGS for k in ("ui_language", "source_label", "target_label")
+            fm.horizontalAdvance(STRINGS[c][k])
+            for c in LANGS for k in ("ui_language", "source_label", "target_label", "engine_label")
         ) + 12
-        for lbl in (self.lbl_ui, self.lbl_src, self.lbl_dst):
+        for lbl in (self.lbl_ui, self.lbl_src, self.lbl_eng, self.lbl_dst):
             lbl.setMinimumWidth(label_w)
 
         apply_theme(QApplication.instance(), self.theme)
@@ -283,6 +301,9 @@ class MainWindow(QWidget):
         self.browse_btn.setText(T["browse"])
         self.lbl_src.setText(T["source_label"])
         self.src_combo.setItemText(0, T["source_auto"])
+        self.lbl_eng.setText(T["engine_label"])
+        self.eng_combo.setItemText(0, T["engine_auto"])
+        self.email_edit.setPlaceholderText(T["email_placeholder"])
         self.lbl_dst.setText(T["target_label"])
         self.chk_sub.setText(T["opt_subfolders"])
         self.chk_folders.setText(T["opt_folders"])
@@ -341,6 +362,10 @@ class MainWindow(QWidget):
         code = self.src_combo.currentData()
         source = next((s for s in core.SOURCE_LANGUAGES if s.code == code), None)
         self.settings.setValue("source", code or "")
+        engine = self.eng_combo.currentData()
+        email = self.email_edit.text().strip()
+        self.settings.setValue("engine", engine)
+        self.settings.setValue("email", email)
         self._dry = self.chk_dry.isChecked()
         src_name = T["source_auto"] if source is None else source.native
         self.log(T["log_start"].format(src=src_name, dst=NATIVE[self.target]))
@@ -350,7 +375,7 @@ class MainWindow(QWidget):
         self.set_running(True)
         self.worker = Worker(dict(
             folder=folder, source=source, target=self.target, recursive=self.chk_sub.isChecked(),
-            folders=self.chk_folders.isChecked(), dry=self._dry,
+            folders=self.chk_folders.isChecked(), dry=self._dry, engine=engine, email=email,
         ))
         self.worker.event.connect(self.on_event)
         self.worker.progress.connect(self.on_progress)
@@ -383,7 +408,9 @@ class MainWindow(QWidget):
         elif k == "stopped":
             self.log(T["log_stopped"])
         elif k == "wait":
-            self.log(T["log_wait"].format(sec=ev.detail))
+            self.log(T["log_wait"].format(name=ev.old, sec=ev.detail))
+        elif k == "switch":
+            self.log(T["log_switch"].format(old=ev.old, new=ev.new))
         elif k == "aborted":
             self.log(f"{T['tag_err']} {T['log_aborted']}")
 
