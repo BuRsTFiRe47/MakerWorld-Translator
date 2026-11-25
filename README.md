@@ -12,7 +12,7 @@
 |---|---|
 | Modern Qt arayüzü (PySide6), **koyu tema varsayılan** | Modern Qt UI (PySide6), **dark theme by default** |
 | Kaynak dil: Otomatik veya tek tek seçim (aşağıdaki tablo) | Source language: Auto or pick one (table below) |
-| Çeviri motoru: Otomatik (Google → Microsoft → MyMemory), toplu istek ve otomatik yedekleme | Translation engine: Auto (Google → Microsoft → MyMemory), batched requests with automatic failover |
+| Çeviri motoru: Otomatik (DeepL → Google → Microsoft → MyMemory), toplu istek ve otomatik yedekleme; kendi DeepL anahtarınızı girebilirsiniz | Translation engine: Auto (DeepL → Google → Microsoft → MyMemory), batched requests with automatic failover; bring your own DeepL key |
 | Hedef dil: 🇹🇷 TR / 🇬🇧 EN / 🇩🇪 DE / 🇪🇸 ES / 🇫🇷 FR | Target language: 🇹🇷 TR / 🇬🇧 EN / 🇩🇪 DE / 🇪🇸 ES / 🇫🇷 FR |
 | Program dili aynı beş dil; seçimler hatırlanır | Program language offers the same five; choices are remembered |
 | Alt klasör tarama (opsiyonel) | Recursive subfolder scan (optional) |
@@ -57,19 +57,35 @@ python -m unittest discover -s tests -v
 
 ### Çeviri motorları / Translation engines
 
-🇹🇷 Çeviri için internet gerekir. API anahtarı gerekmez. Uygulama üç motor kullanır ve **Otomatik** modda sırayla dener:
-1. **Google** — isimleri tek tek değil **toplu** (tek istekte ~25 isim) gönderir; bu yüzden istek sınırına çok daha az takılır.
-2. **Microsoft** (Edge çeviri uç noktası) — toplu, genelde en rahat çalışan motor.
-3. **MyMemory** — son çare; anonim ~5000 karakter/gün. Kutuya e-posta adresinizi yazarsanız günlük limit ~50000 karaktere çıkar.
+🇹🇷 Çeviri için internet gerekir. Uygulama dört motor kullanır ve **Otomatik** modda sırayla dener:
+1. **DeepL** — resmi API, en iyi kalite. **Kendi (ücretsiz) API anahtarınızı** girerseniz kullanılır (aşağıya bakın).
+2. **Google** — isimleri tek tek değil **toplu** (tek istekte ~25 isim) gönderir; anahtar gerekmez.
+3. **Microsoft** (Edge çeviri uç noktası) — toplu, anahtar gerekmez.
+4. **MyMemory** — son çare; anonim ~5000 karakter/gün. E-posta yazarsanız ~50000 karakter/gün.
 
-Bir motor "çok fazla istek" derse kısa süre bekleyip yeniden dener, olmazsa **otomatik olarak sonraki motora geçer** ve logda yazar. Hepsi kullanılamazsa işlem temiz durur; birkaç saat sonra tekrar çalıştırınca çevrilmemiş dosyalardan devam eder. İsterseniz motoru elle de seçebilirsiniz.
+Bir motor "çok fazla istek" derse kısa süre bekleyip yeniden dener, olmazsa **otomatik olarak sonraki motora geçer** ve logda yazar. Hepsi kullanılamazsa işlem temiz durur; sonra tekrar çalıştırınca çevrilmemiş dosyalardan devam eder. Motoru elle de seçebilirsiniz.
 
-🇬🇧 Translation needs an internet connection but no API key. The app has three engines and tries them in order in **Auto** mode:
-1. **Google** — sends names **in batches** (~25 names per request) instead of one by one, so it hits the rate limit far less.
-2. **Microsoft** (the Edge translate endpoint) — batched, usually the most relaxed engine.
-3. **MyMemory** — last resort; ~5000 chars/day anonymously. Enter your email in the box to raise the daily limit to ~50000 characters.
+🇬🇧 Translation needs an internet connection. The app has four engines and tries them in order in **Auto** mode:
+1. **DeepL** — official API, best quality. Used when you enter **your own (free) API key** (see below).
+2. **Google** — sends names **in batches** (~25 names per request) instead of one by one; no key needed.
+3. **Microsoft** (the Edge translate endpoint) — batched, no key needed.
+4. **MyMemory** — last resort; ~5000 chars/day anonymously, ~50000 with an email.
 
-If an engine says "too many requests" the app waits briefly and retries, then **fails over to the next engine automatically** and says so in the log. If none is usable the job stops cleanly; run it again a few hours later and it continues with the files not yet translated. You can also pick one engine manually.
+If an engine says "too many requests" the app waits briefly and retries, then **fails over to the next engine automatically** and says so in the log. If none is usable the job stops cleanly; run it again later and it continues with the files not yet translated. You can also pick an engine manually.
+
+#### DeepL anahtarı / DeepL API key
+
+🇹🇷 1. [deepl.com/pro-api](https://www.deepl.com/pro-api) adresinden **DeepL API Free** planına kaydolun (ayda 500.000 karakter ücretsiz; dosya adları için fazlasıyla yeter).
+2. Hesap sayfasındaki anahtarı (`...:fx` ile biter) uygulamada **API anahtarları** satırına yapıştırın. Anahtar maskelenir ve yalnızca bilgisayarınızdaki ayarlarda saklanır.
+3. İsterseniz anahtarı `DEEPL_API_KEY` ortam değişkenine de koyabilirsiniz.
+
+⚠️ **Anahtarı asla koda, repoya veya release dosyalarına yazmayın.** Repo/exe herkese açıktır; içine gömülen anahtar kolayca çıkarılır ve kotanız başkaları tarafından tüketilir. DeepL şu dilleri kaynak olarak destekler: Çince, Japonca, Korece, Arapça; diğer yazılar (Tayca, Hintçe...) için uygulama otomatik olarak sonraki motora geçer.
+
+🇬🇧 1. Sign up for **DeepL API Free** at [deepl.com/pro-api](https://www.deepl.com/pro-api) (500,000 characters/month for free — plenty for file names).
+2. Paste the key from your account page (ends in `...:fx`) into the **API keys** row in the app. It is masked and stored only in the settings on your own computer.
+3. You can also put the key in the `DEEPL_API_KEY` environment variable.
+
+⚠️ **Never put the key in the code, the repo or the release files.** The repo/exe is public; a key embedded in it is easy to extract and your quota would be used up by strangers. DeepL is used as a source for Chinese, Japanese, Korean and Arabic; for other scripts (Thai, Hindi, ...) the app automatically uses the next engine.
 
 🇹🇷 **Not:** Bunlar resmi anahtarlı API'ler değil, ücretsiz genel uç noktalardır; sağlayıcılar bunları önceden haber vermeden değiştirebilir veya kısıtlayabilir. Bu yüzden çok motorlu yedekleme var.
 🇬🇧 **Note:** These are free public endpoints, not official keyed APIs; providers may change or restrict them without notice, which is why there are several engines with failover.
@@ -150,8 +166,8 @@ git push
 
 ## Sürüm Geçmişi / Changelog
 
-🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında. Güncel sürüm: **v2.1.0**.
-🇬🇧 All changes are in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v2.1.0**.
+🇹🇷 Tüm değişiklikler [`CHANGELOG.md`](CHANGELOG.md) dosyasında. Güncel sürüm: **v2.2.0**.
+🇬🇧 All changes are in [`CHANGELOG.md`](CHANGELOG.md). Current version: **v2.2.0**.
 
 ---
 

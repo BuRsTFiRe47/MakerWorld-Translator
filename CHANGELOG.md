@@ -3,6 +3,30 @@
 TR: Bu proje [Semantic Versioning](https://semver.org/lang/tr/) kullanır.
 EN: This project uses [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-11-25
+
+### TR — Eklenenler
+- **DeepL desteği** (resmi API, ücretsiz anahtarla ayda 500.000 karaktere kadar). Kalite olarak diğer motorlardan belirgin daha iyi.
+  - Arayüzde **API anahtarları** satırına DeepL anahtarınızı yazın (maskelenir, yalnızca sizin bilgisayarınızda ayarlarda saklanır). Alternatif olarak `DEEPL_API_KEY` ortam değişkeni de okunur.
+  - **Otomatik** modda anahtar varsa DeepL en başta denenir, ardından Google → Microsoft → MyMemory. Anahtar yoksa DeepL hiç kullanılmaz.
+  - Toplu istek (tek istekte 50 isim), ücretsiz (`:fx`) ve Pro anahtarlar için doğru uç nokta otomatik seçilir.
+  - Aylık kota dolarsa (456) veya anahtar geçersizse (401/403) beklemeden bir sonraki motora geçilir; anahtar log'a veya URL'ye asla yazılmaz.
+  - DeepL'in desteklemediği kaynak yazılar (Tayca, Hintçe, Bengalce vb.) için DeepL otomatik atlanır ve ilgili isimler sıradaki motora verilir.
+- Motor listesine **DeepL** seçeneği eklendi; anahtarsız seçilirse net bir uyarı gösterilir.
+- Birim test sayısı 41'e çıktı.
+
+### EN — Added
+- **DeepL support** (official API; up to 500,000 characters/month with a free key). Noticeably better quality than the other engines.
+  - Enter your DeepL key in the **API keys** row (masked, stored only in the settings on your own computer). The `DEEPL_API_KEY` environment variable is also read.
+  - In **Auto** mode DeepL is tried first when a key exists, then Google → Microsoft → MyMemory. Without a key DeepL is never used.
+  - Batched (50 names per request); the right endpoint is chosen automatically for free (`:fx`) and Pro keys.
+  - If the monthly quota runs out (456) or the key is invalid (401/403) it fails over to the next engine without waiting; the key is never written to the log or the URL.
+  - For source scripts DeepL does not support (Thai, Hindi, Bengali, ...) DeepL is skipped automatically and those names go to the next engine.
+- **DeepL** added to the engine list; choosing it without a key shows a clear warning.
+- Unit tests grew to 41.
+
+---
+
 ## [2.1.0] - 2026-11-02
 
 ### TR — Değişenler

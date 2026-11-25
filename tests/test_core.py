@@ -357,5 +357,102 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(core.build_chain("mymemory", email=" me@x.y ").engines[0].email, "me@x.y")
 
 
+class DeepLTests(unittest.TestCase):
+    OK = '{"translations":[{"detected_source_language":"ZH","text":"dragon"},{"detected_source_language":"ZH","text":"lamp"}]}'
+
+    def test_free_key_uses_free_endpoint_header_and_json_batch(self):
+        http = FakeHttp((200, self.OK))
+        eng = core.DeepLEngine(http, key="abc123:fx")
+        self.assertEqual(eng.translate_many(["龙", "灯"], "zh-CN", "en"), ["dragon", "lamp"])
+        url, data, headers, method = http.requests[0]
+        self.assertTrue(url.startswith("https://api-free.deepl.com/v2/translate"))
+        self.assertEqual(method, "POST")
+        self.assertEqual(headers["Authorization"], "DeepL-Auth-Key abc123:fx")
+        payload = __import__("json").loads(data)
+        self.assertEqual(payload["text"], ["龙", "灯"])          # both names in ONE request
+        self.assertEqual(payload["target_lang"], "EN-US")
+        self.assertEqual(payload["source_lang"], "ZH")
+        self.assertEqual(payload["split_sentences"], "0")
+        self.assertNotIn("abc123", url)                           # key never in the URL
+
+    def test_pro_key_uses_pro_endpoint_and_target_codes(self):
+        http = FakeHttp((200, '{"translations":[{"text":"x"}]}'))
+        eng = core.DeepLEngine(http, key="abc123")
+        eng.translate_many(["龙"], "ja", "tr")
+        self.assertTrue(http.requests[0][0].startswith("https://api.deepl.com/v2/translate"))
+        self.assertEqual(__import__("json").loads(http.requests[0][1])["target_lang"], "TR")
+
+    def test_error_statuses(self):
+        def call(status):
+            return core.DeepLEngine(FakeHttp((status, "")), key="k:fx").translate_many(["龙"], "zh-CN", "en")
+        for status, retry in [(429, True), (529, True), (456, False), (403, False), (401, False)]:
+            with self.assertRaises(core.RateLimited) as cm:
+                call(status)
+            self.assertEqual(cm.exception.retry, retry, status)
+        with self.assertRaises(RuntimeError):
+            call(500)
+
+    def test_count_mismatch_and_supports(self):
+        eng = core.DeepLEngine(FakeHttp((200, '{"translations":[{"text":"only one"}]}')), key="k:fx")
+        with self.assertRaises(core.BatchMismatch):
+            eng.translate_many(["龙", "灯"], "zh-CN", "en")
+        for code in ("zh-CN", "ja", "ko", "ar"):
+            self.assertTrue(eng.supports(code))
+        for code in ("th", "hi", "auto", "iw"):
+            self.assertFalse(eng.supports(code))
+
+    def test_chain_skips_unsupported_language_without_switching_permanently(self):
+        class OnlyZh(ScriptedEngine):
+            def supports(self, source):
+                return source == "zh-CN"
+        d = OnlyZh("D")
+        g = ScriptedEngine("G")
+        c = chain(d, g)
+        switches = []
+        c.on_switch = lambda *a: switches.append(a)
+        self.assertEqual(c.translate("สวัสดี", "th", "en"), "G:สวัสดี")   # DeepL skipped for Thai
+        self.assertEqual(d.calls, [])
+        self.assertEqual(c.active, 0)                                       # no permanent switch
+        self.assertEqual(c.translate("龙", "zh-CN", "en"), "D:龙")          # still used for Chinese
+        self.assertEqual(switches, [])
+
+    def test_quota_exhausted_fails_over_and_all_unsupported_is_fatal(self):
+        d = ScriptedEngine("D", [core.RateLimited("quota", retry=False)])
+        g = ScriptedEngine("G")
+        c = chain(d, g)
+        switches = []
+        c.on_switch = lambda old, new: switches.append((old, new))
+        self.assertEqual(c.translate("龙", "zh-CN", "en"), "G:龙")
+        self.assertEqual(switches, [("D", "G")])
+
+        class Never(ScriptedEngine):
+            def supports(self, source):
+                return False
+        with self.assertRaises(core.FatalTranslateError):
+            chain(Never("N")).translate("龙", "zh-CN", "en")
+
+    def test_build_chain_with_deepl(self):
+        names = lambda ch: [e.name for e in ch.engines]
+        self.assertEqual(names(core.build_chain("auto", deepl_key="k:fx")),
+                         ["DeepL", "Google", "Microsoft", "MyMemory"])
+        self.assertEqual(names(core.build_chain("auto")), ["Google", "Microsoft", "MyMemory"])
+        self.assertEqual(names(core.build_chain("deepl", deepl_key=" k:fx ")), ["DeepL"])
+        self.assertEqual(core.build_chain("deepl", deepl_key=" k:fx ").engines[0].key, "k:fx")
+        with self.assertRaises(ValueError):
+            core.build_chain("deepl")
+
+    def test_env_var_fallback(self):
+        old = os.environ.get("DEEPL_API_KEY")
+        os.environ["DEEPL_API_KEY"] = "envkey:fx"
+        try:
+            self.assertEqual([e.name for e in core.build_chain("auto").engines][0], "DeepL")
+            self.assertEqual(core.resolve_deepl_key("typed:fx"), "typed:fx")   # the field wins
+        finally:
+            if old is None:
+                del os.environ["DEEPL_API_KEY"]
+            else:
+                os.environ["DEEPL_API_KEY"] = old
+
+
 if __name__ == "__main__":
     unittest.main()

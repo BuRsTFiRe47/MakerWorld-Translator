@@ -128,7 +128,7 @@ class Worker(QThread):
     def run(self) -> None:
         p = self.params
         try:
-            self.backend = core.build_chain(p["engine"], p["email"])
+            self.backend = core.build_chain(p["engine"], p["email"], deepl_key=p["deepl_key"])
             self.backend.on_wait = lambda name, sec: self.event.emit(core.Event("wait", old=name, detail=str(sec)))
             self.backend.on_switch = lambda old, new: self.event.emit(core.Event("switch", old=old, new=new))
             summary = core.run(
@@ -161,7 +161,7 @@ class MainWindow(QWidget):
         self.worker: Worker | None = None
         self._dry = False
 
-        self.resize(820, 680)
+        self.resize(820, 720)
         self.setAcceptDrops(True)
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 18, 20, 14)
@@ -212,13 +212,24 @@ class MainWindow(QWidget):
         self.lbl_eng = QLabel()
         self.eng_combo = QComboBox()
         self.eng_combo.addItem("", "auto")
-        for code, label in (("google", "Google"), ("microsoft", "Microsoft"), ("mymemory", "MyMemory")):
+        for code, label in (("deepl", "DeepL"), ("google", "Google"), ("microsoft", "Microsoft"),
+                            ("mymemory", "MyMemory")):
             self.eng_combo.addItem(label, code)
         saved_eng = str(settings.value("engine", "auto"))
         self.eng_combo.setCurrentIndex(max(self.eng_combo.findData(saved_eng), 0))
-        self.email_edit = QLineEdit(str(settings.value("email", "")))
         row.addWidget(self.lbl_eng)
         row.addWidget(self.eng_combo, 1)
+        root.addLayout(row)
+
+        # Row 3c: API keys (DeepL key is stored locally in this user's settings, never in the code)
+        row = QHBoxLayout()
+        self.lbl_keys = QLabel()
+        self.key_edit = QLineEdit(str(settings.value("deepl_key", "")))
+        self.key_edit.setEchoMode(QLineEdit.Password)
+        self.key_edit.setClearButtonEnabled(True)
+        self.email_edit = QLineEdit(str(settings.value("email", "")))
+        row.addWidget(self.lbl_keys)
+        row.addWidget(self.key_edit, 1)
         row.addWidget(self.email_edit, 1)
         root.addLayout(row)
 
@@ -278,9 +289,9 @@ class MainWindow(QWidget):
         fm = self.lbl_ui.fontMetrics()
         label_w = max(
             fm.horizontalAdvance(STRINGS[c][k])
-            for c in LANGS for k in ("ui_language", "source_label", "target_label", "engine_label")
+            for c in LANGS for k in ("ui_language", "source_label", "target_label", "engine_label", "keys_label")
         ) + 12
-        for lbl in (self.lbl_ui, self.lbl_src, self.lbl_eng, self.lbl_dst):
+        for lbl in (self.lbl_ui, self.lbl_src, self.lbl_eng, self.lbl_keys, self.lbl_dst):
             lbl.setMinimumWidth(label_w)
 
         apply_theme(QApplication.instance(), self.theme)
@@ -304,6 +315,8 @@ class MainWindow(QWidget):
         self.lbl_eng.setText(T["engine_label"])
         self.eng_combo.setItemText(0, T["engine_auto"])
         self.email_edit.setPlaceholderText(T["email_placeholder"])
+        self.lbl_keys.setText(T["keys_label"])
+        self.key_edit.setPlaceholderText(T["deepl_placeholder"])
         self.lbl_dst.setText(T["target_label"])
         self.chk_sub.setText(T["opt_subfolders"])
         self.chk_folders.setText(T["opt_folders"])
@@ -364,8 +377,13 @@ class MainWindow(QWidget):
         self.settings.setValue("source", code or "")
         engine = self.eng_combo.currentData()
         email = self.email_edit.text().strip()
+        deepl_key = self.key_edit.text().strip()
         self.settings.setValue("engine", engine)
         self.settings.setValue("email", email)
+        self.settings.setValue("deepl_key", deepl_key)
+        if engine == "deepl" and not core.resolve_deepl_key(deepl_key):
+            self.log(f"{T['tag_err']} {T['err_no_deepl_key']}")
+            return
         self._dry = self.chk_dry.isChecked()
         src_name = T["source_auto"] if source is None else source.native
         self.log(T["log_start"].format(src=src_name, dst=NATIVE[self.target]))
@@ -376,6 +394,7 @@ class MainWindow(QWidget):
         self.worker = Worker(dict(
             folder=folder, source=source, target=self.target, recursive=self.chk_sub.isChecked(),
             folders=self.chk_folders.isChecked(), dry=self._dry, engine=engine, email=email,
+            deepl_key=deepl_key,
         ))
         self.worker.event.connect(self.on_event)
         self.worker.progress.connect(self.on_progress)

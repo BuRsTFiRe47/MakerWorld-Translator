@@ -175,8 +175,66 @@ class Engine:
     def __init__(self, http=http_request):
         self.http = http
 
+    def supports(self, source: str) -> bool:
+        """TR: Bu motor bu kaynak dili çevirebilir mi? EN: Can this engine translate this source language?"""
+        return True
+
     def translate_many(self, texts: list, source: str, target: str) -> list:
         raise NotImplementedError
+
+
+class DeepLEngine(Engine):
+    """DeepL resmi API'si (ücretsiz anahtarlar ':fx' ile biter). Toplu, en iyi kalite.
+    Official DeepL API (free keys end in ':fx'). Batched, best quality.
+
+    TR: DeepL kaynak dil olarak yalnızca burada listelenenleri alır; diğer yazılar (Tayca, Hintçe...)
+        bu motor atlanıp sıradaki motora verilir. Anahtar asla loga veya URL'ye yazılmaz.
+    EN: DeepL only takes the source languages listed here; other scripts (Thai, Hindi...) skip this
+        engine and go to the next one. The key is never written to the log or the URL."""
+
+    name = "DeepL"
+    max_batch = 50
+    max_chars = 3000
+    min_interval = 0.3
+    SOURCE = {"zh-CN": "ZH", "ja": "JA", "ko": "KO", "ar": "AR"}
+    TARGET = {"tr": "TR", "en": "EN-US", "de": "DE", "es": "ES", "fr": "FR"}
+
+    def __init__(self, http=http_request, key: str = ""):
+        super().__init__(http)
+        self.key = key.strip()
+
+    @property
+    def url(self) -> str:
+        host = "api-free.deepl.com" if self.key.endswith(":fx") else "api.deepl.com"
+        return f"https://{host}/v2/translate"
+
+    def supports(self, source: str) -> bool:
+        return source in self.SOURCE
+
+    def translate_many(self, texts, source, target):
+        payload = {"text": list(texts), "target_lang": self.TARGET.get(target, target.upper()),
+                   "split_sentences": "0"}   # TR: dosya adlarını cümle diye bölme / EN: don't split names into sentences
+        if source in self.SOURCE:
+            payload["source_lang"] = self.SOURCE[source]
+        status, body = self.http(
+            self.url, data=json.dumps(payload).encode("utf-8"), method="POST",
+            headers={"Authorization": f"DeepL-Auth-Key {self.key}", "Content-Type": "application/json"},
+        )
+        if status in (429, 529):
+            raise RateLimited(f"DeepL: HTTP {status}")
+        if status == 456:
+            raise RateLimited("DeepL: monthly character quota exceeded (456)", retry=False)
+        if status in (401, 403):
+            raise RateLimited(f"DeepL: invalid API key (HTTP {status})", retry=False)
+        if status != 200:
+            raise RuntimeError(f"DeepL: HTTP {status}")
+        try:
+            out = [item["text"] for item in json.loads(body)["translations"]]
+        except (ValueError, TypeError, KeyError):
+            raise RuntimeError("DeepL: unexpected response")
+        if len(out) != len(texts):
+            raise BatchMismatch()
+        return out
 
 
 class GoogleEngine(Engine):
@@ -340,15 +398,28 @@ class TranslatorChain:
         self._last[engine.name] = time.monotonic()
 
     # --- core ------------------------------------------------------------
+    def _next_supporting(self, start: int, source: str) -> int:
+        i = start
+        while i < len(self.engines) and not self.engines[i].supports(source):
+            i += 1
+        return i
+
     def _attempt(self, texts, source, target):
+        n = len(self.engines)
+        # TR: Bu dili desteklemeyen motorlar (ör. DeepL + Tayca) atlanır, kalıcı geçiş sayılmaz.
+        # EN: Engines that don't support this language (e.g. DeepL + Thai) are skipped, not a permanent switch.
+        idx = self._next_supporting(self.active, source)
         while True:
-            engine = self.engines[self.active]
+            if idx >= n:
+                raise FatalTranslateError(self._last_error or f"no translation engine supports '{source}'")
+            engine = self.engines[idx]
             if len(texts) > engine.max_batch:
                 out: list = []
                 for i in range(0, len(texts), engine.max_batch):
                     out += self._attempt(texts[i:i + engine.max_batch], source, target)
                 return out
-            waits = self.final_waits if self.active == len(self.engines) - 1 else self.rate_waits
+            is_last = self._next_supporting(idx + 1, source) >= n
+            waits = self.final_waits if is_last else self.rate_waits
             rate_tries = other_tries = 0
             while True:
                 if self.cancelled:
@@ -380,14 +451,16 @@ class TranslatorChain:
                         raise
                     other_tries += 1
                     self._sleep(self.delay * other_tries)
-            # TR: Bu motor pes etti → sonrakine geç, yoksa işi bırak
-            # EN: This engine gave up → fail over, or give up entirely
-            if self.active + 1 >= len(self.engines):
+            # TR: Bu motor pes etti → desteklediği sonraki motora geç, yoksa işi bırak
+            # EN: This engine gave up → fail over to the next supporting engine, or give up entirely
+            nxt = self._next_supporting(idx + 1, source)
+            if nxt >= n:
                 raise FatalTranslateError(self._last_error or "no translation engine available")
             old = engine.name
-            self.active += 1
+            idx = nxt
+            self.active = max(self.active, idx)
             if self.on_switch:
-                self.on_switch(old, self.engines[self.active].name)
+                self.on_switch(old, self.engines[idx].name)
 
     def translate(self, text: str, source: str, target: str) -> str:
         key = (text, source, target)
@@ -435,16 +508,29 @@ class TranslatorChain:
                         self._cache[(t, src, target)] = o
 
 
-ENGINE_CHOICES = ("auto", "google", "microsoft", "mymemory")
+ENGINE_CHOICES = ("auto", "deepl", "google", "microsoft", "mymemory")
 
 
-def build_chain(choice: str = "auto", email: str = "", http=http_request) -> TranslatorChain:
+def resolve_deepl_key(key: str = "") -> str:
+    """TR: Alan boşsa DEEPL_API_KEY ortam değişkenine bakar. EN: Falls back to the DEEPL_API_KEY env var."""
+    return (key or os.environ.get("DEEPL_API_KEY", "")).strip()
+
+
+def build_chain(choice: str = "auto", email: str = "", http=http_request, deepl_key: str = "") -> TranslatorChain:
+    key = resolve_deepl_key(deepl_key)
     makers = {
+        "deepl": lambda: DeepLEngine(http, key=key),
         "google": lambda: GoogleEngine(http),
         "microsoft": lambda: MicrosoftEngine(http),
         "mymemory": lambda: MyMemoryEngine(http, email=email.strip()),
     }
-    order = ["google", "microsoft", "mymemory"] if choice == "auto" else [choice]
+    if choice == "auto":
+        # TR: DeepL yalnızca anahtar varsa en başa eklenir / EN: DeepL goes first only when a key exists
+        order = (["deepl"] if key else []) + ["google", "microsoft", "mymemory"]
+    else:
+        if choice == "deepl" and not key:
+            raise ValueError("DeepL API key required")
+        order = [choice]
     return TranslatorChain([makers[k]() for k in order])
 
 
